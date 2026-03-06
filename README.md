@@ -2,7 +2,8 @@
 Python automation system that monitors a folder, detects vehicle license plates using OCR, converts images to PDF, and automatically organizes files by vehicle plate.
 
 Features:
-_ Real-time folder monitoring
+
+- Real-time folder monitoring
 - License plate detection using OCR
 - Automatic PDF generation from images
 - Automatic organization of files by vehicle plate
