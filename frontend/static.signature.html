@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#2563eb" />
+  <title>Assinatura da OS</title>
+
+  <style>
+    :root {
+      --primary: #2563eb;
+      --primary-hover: #1d4ed8;
+      --success: #16a34a;
+      --error: #dc2626;
+      --bg: #f8fafc;
+      --surface: #ffffff;
+      --text: #0f172a;
+      --muted: #64748b;
+      --border: #cbd5e1;
+      --shadow: 0 10px 25px rgba(15, 23, 42, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: linear-gradient(180deg, #eff6ff 0%, var(--bg) 100%);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 580px;
+      background: var(--surface);
+      border-radius: 20px;
+      box-shadow: var(--shadow);
+      padding: 1.5rem;
+    }
+
+    .header {
+      text-align: center;
+      margin-bottom: 1.5rem;
+    }
+
+    .header h1 {
+      font-size: 1.6rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .header p {
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    .plate-badge {
+      display: inline-block;
+      margin-top: 0.75rem;
+      padding: 0.5rem 0.9rem;
+      border-radius: 999px;
+      background: #eff6ff;
+      color: var(--primary);
+      font-weight: 700;
+      letter-spacing: 0.05em;
+    }
+
+    .sig-box {
+      position: relative;
+      width: 100%;
+      height: 220px;
+      border: 2px dashed var(--border);
+      border-radius: 14px;
+      overflow: hidden;
+      background: #fff;
+      touch-action: none;
+    }
+
+    canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      touch-action: none;
+      cursor: crosshair;
+    }
+
+    .placeholder {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--muted);
+      font-size: 0.95rem;
+      pointer-events: none;
+      transition: opacity 0.2s ease;
+    }
+
+    .actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.75rem;
+      margin-top: 1rem;
+    }
+
+    button {
+      border: none;
+      border-radius: 12px;
+      padding: 0.9rem 1rem;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    .btn-clear {
+      background: #fee2e2;
+      color: var(--error);
+    }
+
+    .btn-clear:hover:not(:disabled) {
+      background: #fecaca;
+    }
+
+    .btn-send {
+      background: var(--primary);
+      color: #fff;
+    }
+
+    .btn-send:hover:not(:disabled) {
+      background: var(--primary-hover);
+    }
+
+    .status {
+      display: none;
+      margin-top: 1rem;
+      padding: 0.9rem;
+      border-radius: 12px;
+      text-align: center;
+      font-size: 0.95rem;
+      font-weight: 500;
+    }
+
+    .status.success {
+      display: block;
+      background: #dcfce7;
+      color: #166534;
+    }
+
+    .status.error {
+      display: block;
+      background: #fee2e2;
+      color: #991b1b;
+    }
+
+    @media (max-width: 480px) {
+      .container {
+        padding: 1rem;
+        border-radius: 16px;
+      }
+
+      .sig-box {
+        height: 180px;
+      }
+
+      .actions {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+
+  <script src="https://cdn.jsdelivr.net/npm/signature_pad@4.1.7/dist/signature_pad.umd.min.js"></script>
+</head>
+<body>
+  <main class="container">
+    <header class="header">
+      <h1>Assinatura da Ordem de Serviço</h1>
+      <p>Assine no campo abaixo para confirmar o aceite da OS.</p>
+      <span class="plate-badge" id="plate">---</span>
+    </header>
+
+    <section class="sig-box" aria-label="Área de assinatura">
+      <canvas id="sig"></canvas>
+      <div class="placeholder" id="placeholder">Assine aqui</div>
+    </section>
+
+    <div class="actions">
+      <button type="button" class="btn-clear" id="clearBtn">🗑️ Limpar</button>
+      <button type="button" class="btn-send" id="sendBtn" disabled>✅ Enviar</button>
+    </div>
+
+    <div id="status" class="status" role="alert" aria-live="polite"></div>
+  </main>
+
+  <script>
+    const canvas = document.getElementById('sig');
+    const sendBtn = document.getElementById('sendBtn');
+    const clearBtn = document.getElementById('clearBtn');
+    const statusEl = document.getElementById('status');
+    const placeholder = document.getElementById('placeholder');
+
+    const plate = new URLSearchParams(window.location.search)
+      .get('plate')
+      ?.trim()
+      .toUpperCase() || 'DESCONHECIDA';
+
+    document.getElementById('plate').textContent = plate;
+
+    const signaturePad = new SignaturePad(canvas, {
+      backgroundColor: 'rgb(255, 255, 255)',
+      penColor: 'rgb(15, 23, 42)',
+      minWidth: 1,
+      maxWidth: 2.5
+    });
+
+    function resizeCanvas() {
+      const ratio = Math.max(window.devicePixelRatio || 1, 1);
+      const data = signaturePad.isEmpty() ? null : signaturePad.toData();
+
+      canvas.width = canvas.offsetWidth * ratio;
+      canvas.height = canvas.offsetHeight * ratio;
+      canvas.getContext('2d').scale(ratio, ratio);
+
+      if (data) {
+        signaturePad.fromData(data);
+      } else {
+        signaturePad.clear();
+      }
+    }
+
+    function updateUI() {
+      const isEmpty = signaturePad.isEmpty();
+      sendBtn.disabled = isEmpty;
+      placeholder.style.opacity = isEmpty ? '1' : '0';
+    }
+
+    function showStatus(message, type) {
+      statusEl.textContent = message;
+      statusEl.className = `status ${type}`;
+    }
+
+    function clearStatus() {
+      statusEl.textContent = '';
+      statusEl.className = 'status';
+    }
+
+    signaturePad.addEventListener('endStroke', updateUI);
+    window.addEventListener('resize', resizeCanvas);
+
+    clearBtn.addEventListener('click', () => {
+      signaturePad.clear();
+      updateUI();
+      clearStatus();
+    });
+
+    sendBtn.addEventListener('click', async () => {
+      if (signaturePad.isEmpty()) return;
+
+      sendBtn.disabled = true;
+      clearBtn.disabled = true;
+      sendBtn.textContent = 'Enviando...';
+      clearStatus();
+
+      try {
+        const response = await fetch('/api/v1/sign-virtual', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            plate,
+            signature: signaturePad.toDataURL('image/png'),
+            signatory_name: 'Responsável',
+            signatory_role: 'Operador',
+            reason: 'Aceite da OS'
+          })
+        });
+
+        const data = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+          throw new Error(data.detail || 'Erro ao registrar assinatura. Porque nada nunca é simples.');
+        }
+
+        showStatus('✅ Assinatura registrada com sucesso!', 'success');
+      } catch (error) {
+        showStatus(`❌ ${error.message}`, 'error');
+      } finally {
+        sendBtn.textContent = '✅ Enviar';
+        clearBtn.disabled = false;
+        updateUI();
+      }
+    });
+
+    resizeCanvas();
+    updateUI();
+
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js').catch(() => {
+          /* silêncio estratégico */
+        });
+      });
+    }
+  </script>
+</body>
+</html>

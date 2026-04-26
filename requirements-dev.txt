@@ -1,0 +1,14 @@
+# Development Dependencies
+# Includes all production dependencies
+
+# Testing & Coverage
+pytest~=8.3.0
+pytest-cov~=5.0.0
+
+# Linting, Formatting & Type Checking
+ruff~=0.6.0
+black~=24.8.0
+mypy~=1.11.0
+
+# Pre-commit automation (opcional, mas recomendado)
+pre-commit~=3.8.0

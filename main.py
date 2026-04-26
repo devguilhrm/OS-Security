@@ -1,118 +1,79 @@
+import sys
+import signal
+import logging
 import os
-import re
-import time
-import cv2
-import pytesseract
-pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
-
-from PIL import Image
+from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler
-from datetime import datetime
+import uvicorn
+from src.config import Config
+from src.watcher import ImageHandler
+from src.database import DBManager
+from src.api import app, db_manager as api_db, executor as api_executor
+from src.config_watcher import ConfigHotReloader
+from src.metrics import *  # Garante registro das métricas no registro global
 
+def setup_logging():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)-8s | %(message)s",
+        datefmt="%H:%M:%S",
+        handlers=[logging.StreamHandler(sys.stdout)]
+    )
 
-# Pastas do sistema
-PASTA_IMAGENS = "imagens_camera"
-PASTA_BASE = "ordensdeservico"
-PASTA_PROCESSADAS = "processadas"
+def verify_directories():
+    for d in [Config.INPUT_DIR, Config.BASE_DIR, Config.PROCESSED_DIR, Config.REVIEW_DIR]:
+        d.mkdir(parents=True, exist_ok=True)
 
+def check_tesseract():
+    import pytesseract
+    try:
+        pytesseract.get_tesseract_version()
+    except Exception as e:
+        logging.critical(f"❌ Tesseract indisponível: {e}")
+        sys.exit(1)
 
-# Criar pastas automaticamente se não existirem
-for pasta in [PASTA_IMAGENS, PASTA_BASE, PASTA_PROCESSADAS]:
-    if not os.path.exists(pasta):
-        os.makedirs(pasta)
+def main():
+    setup_logging()
+    check_tesseract()
+    verify_directories()
 
+    api_db = DBManager(Config.DB_PATH)
+    api_executor = ThreadPoolExecutor(max_workers=Config.MAX_WORKERS)
 
-# Função para detectar a placa
-def detectar_placa(caminho_imagem):
+    # Inicializa hot-reload de configurações
+    config_watcher = ConfigHotReloader([Config.FLEET_MAPPING_PATH], check_interval=30)
+    config_watcher.start()
 
-    img = cv2.imread(caminho_imagem)
+    enable_watchdog = os.getenv("ENABLE_WATCHDOG", "true").lower() == "true"
+    if enable_watchdog:
+        observer = Observer()
+        handler = ImageHandler()
+        observer.schedule(handler, str(Config.INPUT_DIR), recursive=False)
+        observer.start()
+        logging.info(f"👁️ Watchdog ativo: {Config.INPUT_DIR.absolute()}")
 
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    api_port = int(os.getenv("API_PORT", "8000"))
+    logging.info(f"🚀 FastAPI iniciando na porta {api_port} | Workers: {Config.MAX_WORKERS} | Webhook: {'Ativo' if Config.WEBHOOK_URL else 'Desativado'}")
 
-    texto = pytesseract.image_to_string(gray)
+    def shutdown(signum, frame):
+        logging.info("🛑 Sinal de encerramento recebido. Drenando tarefas...")
+        if enable_watchdog:
+            observer.stop()
+            observer.join()
+        config_watcher.stop()
+        api_executor.shutdown(wait=True, cancel_futures=False)
+        api_db.close()
+        logging.info("✅ Serviço finalizado com segurança.")
+        sys.exit(0)
 
-    texto = texto.upper()
+    signal.signal(signal.SIGINT, shutdown)
+    signal.signal(signal.SIGTERM, shutdown)
 
-    placa = re.findall(r'[A-Z]{3}[0-9][A-Z0-9][0-9]{2}', texto)
+    try:
+        uvicorn.run(app, host="0.0.0.0", port=api_port, log_level="info")
+    except KeyboardInterrupt:
+        shutdown(None, None)
 
-    if placa:
-        return placa[0]
-
-    return None
-
-
-# Função que processa a imagem
-def processar_imagem(caminho_imagem):
-
-    placa = detectar_placa(caminho_imagem)
-
-    if not placa:
-        print("Placa não detectada:", caminho_imagem)
-        return
-
-    # criar pasta do carro
-    pasta_carro = os.path.join(PASTA_BASE, placa)
-
-    if not os.path.exists(pasta_carro):
-        os.makedirs(pasta_carro)
-
-    # abrir imagem
-    imagem = Image.open(caminho_imagem)
-
-    if imagem.mode in ("RGBA", "P"):
-        imagem = imagem.convert("RGB")
-
-    # gerar nome do pdf
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    nome_pdf = f"{timestamp}.pdf"
-
-    caminho_pdf = os.path.join(pasta_carro, nome_pdf)
-
-    # salvar pdf
-    imagem.save(caminho_pdf, "PDF")
-
-    print("PDF salvo em:", caminho_pdf)
-
-    # mover imagem original
-    nome_imagem = os.path.basename(caminho_imagem)
-    destino = os.path.join(PASTA_PROCESSADAS, nome_imagem)
-
-    os.rename(caminho_imagem, destino)
-
-    print("Imagem movida para:", destino)
-
-
-# Classe que observa novas imagens
-class ObservadorImagens(FileSystemEventHandler):
-
-    def on_created(self, event):
-
-        if event.is_directory:
-            return
-
-        print("Nova imagem detectada:", event.src_path)
-
-        processar_imagem(event.src_path)
-
-
-# iniciar observador
-observer = Observer()
-
-handler = ObservadorImagens()
-
-observer.schedule(handler, PASTA_IMAGENS, recursive=False)
-
-observer.start()
-
-print("Sistema iniciado. Observando pasta:", PASTA_IMAGENS)
-
-
-try:
-    while True:
-        time.sleep(1)
-
-except KeyboardInterrupt:
-    observer.stop()
-
-observer.join()
+if __name__ == "__main__":
+    main()

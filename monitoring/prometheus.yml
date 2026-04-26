@@ -1,0 +1,9 @@
+global:
+  scrape_interval: 10s
+  evaluation_interval: 10s
+
+scrape_configs:
+  - job_name: 'ocr-automation'
+    static_configs:
+      - targets: ['automacao-os:8000']
+    metrics_path: '/metrics'

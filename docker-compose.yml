@@ -1,0 +1,87 @@
+version: '3.8'
+
+services:
+  automacao-os:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: automacao-os
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - INPUT_DIR=/app/input
+      - BASE_DIR=/app/output/ordens
+      - PROCESSED_DIR=/app/output/processadas
+      - REVIEW_DIR=/app/output/revisao
+      - DB_PATH=/app/data/processed.db
+      - TESSERACT_PATH=/usr/bin/tesseract
+      - OCR_CONFIDENCE=65
+      - FILE_STABILITY_WAIT=2.0
+      - MAX_WORKERS=4
+      - VALIDATE_PLATE_CHECKSUM=true
+      - ENABLE_WATCHDOG=true
+      - API_PORT=8000
+      - WEBHOOK_URL=${WEBHOOK_URL:-}
+      - ERP_WEBHOOK_URL=${ERP_WEBHOOK_URL:-}
+      - ERP_WEBHOOK_HEADERS=${ERP_WEBHOOK_HEADERS:-{"Content-Type": "application/json", "X-Source": "ocr-automation"}}
+      - ERP_WEBHOOK_TIMEOUT=5
+      - FLEET_MAPPING_PATH=/app/data/fleet_mapping.json
+    volumes:
+      - ./input:/app/input
+      - ./output:/app/output
+      - ./data:/app/data
+      - ./logs:/app/logs
+    user: "${UID:-1000}:${GID:-1000}"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/ready')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - monitor-net
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+    networks:
+      - monitor-net
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana-dashboard.json:/etc/grafana/provisioning/dashboards/ocr-dashboard.json
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_PROVISIONING=true
+      - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/etc/grafana/provisioning/dashboards/ocr-dashboard.json
+    networks:
+      - monitor-net
+
+volumes:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  monitor-net:
+    driver: bridge
